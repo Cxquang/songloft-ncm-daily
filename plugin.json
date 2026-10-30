@@ -1,0 +1,24 @@
+{
+  "name": "网易云日推",
+  "name_en": "songloft-ncm-daily",
+  "version": "0.2.0",
+  "description": "每日自动同步网易云音乐「每日推荐」到 Songloft 曲库与歌单，支持扫码登录、登录过期监控、MoviePilot 通知转发（企业微信等渠道）。",
+  "author": "Cxquang",
+  "license": "MIT",
+  "entryPath": "ncm-daily",
+  "main": "main.js",
+  "icon": "icon.svg",
+  "minHostVersion": "2.11.0",
+  "permissions": [
+    "storage",
+    "songs.*",
+    "playlists.*"
+  ],
+  "publicPaths": [
+    "/public"
+  ],
+  "staticHash": false,
+  "homepage": "https://github.com/Cxquang/songloft-ncm-daily",
+  "entryHash": "f6063d7ce450dc66228b4b77fb50a9d37350b913d10f28e17d847c477024dffd",
+  "zipHash": "9e70afa4821b1b9c1b3a9778c9001dca117ca8f539fd26110081b23cbc2268e6"
+}

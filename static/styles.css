@@ -1,0 +1,86 @@
+:root {
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --text: #1f2329;
+  --sub: #646a73;
+  --primary: #c20c0c;
+  --primary-hover: #d93a3a;
+  --border: #e5e6eb;
+  --ok: #2ea44f;
+  --bad: #d93a3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191f;
+    --card: #1f2329;
+    --text: #e8eaed;
+    --sub: #9aa0a6;
+    --border: #2f3238;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.wrap { max-width: 640px; margin: 0 auto; padding: 20px 16px 48px; }
+
+.header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+.header .icon { width: 44px; height: 44px; border-radius: 10px; }
+.header h1 { font-size: 20px; margin: 0; }
+.sub { color: var(--sub); font-size: 13px; margin: 4px 0 0; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+.card h2 { font-size: 15px; margin: 0 0 14px; }
+.card.hidden { display: none; }
+
+.status-row { margin-bottom: 10px; font-size: 14px; line-height: 1.6; }
+.avatar { width: 24px; height: 24px; border-radius: 50%; vertical-align: -6px; margin-right: 6px; }
+
+.badge {
+  display: inline-block; padding: 1px 10px; border-radius: 999px;
+  font-size: 12px; color: #fff;
+}
+.badge.ok { background: var(--ok); }
+.badge.bad { background: var(--bad); }
+
+.actions { margin-top: 14px; display: flex; align-items: center; gap: 10px; }
+
+button {
+  border: none; border-radius: 8px; padding: 8px 18px;
+  font-size: 14px; cursor: pointer;
+}
+button.primary { background: var(--primary); color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--primary-hover); }
+button.primary:disabled { opacity: .55; cursor: default; }
+button.ghost { background: transparent; color: var(--sub); border: 1px solid var(--border); }
+button.ghost:hover { color: var(--text); }
+
+.tip { color: var(--sub); font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
+.tip.small { font-size: 12px; }
+
+.qr-box { display: flex; justify-content: center; padding: 8px 0; }
+.qr-box img { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+
+.form label { display: block; font-size: 13px; color: var(--sub); margin: 12px 0 6px; }
+.form input[type="text"], .form input[type="password"], .form input[type="number"], .form select {
+  width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); color: var(--text); font-size: 14px;
+}
+.form input:focus, .form select:focus { outline: 1px solid var(--primary); }
+.form .check { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: var(--text); font-size: 14px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+.failed-list { margin: 0; padding: 0 0 0 18px; font-size: 13px; color: var(--sub); line-height: 1.9; }

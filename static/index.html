@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>网易云日推</title>
+  <base href="/">
+  <link rel="stylesheet" href="static/styles.css?v=0.2.0">
+</head>
+<body>
+  <div class="wrap">
+    <header class="header">
+      <img class="icon" src="static/icon.svg?v=0.2.0" alt="">
+      <div>
+        <h1>网易云日推</h1>
+        <p class="sub">每日同步网易云「每日推荐」到曲库 <span id="ver"></span></p>
+      </div>
+    </header>
+
+    <section class="card" id="card-status">
+      <h2>状态</h2>
+      <div class="status-row" id="login-status"></div>
+      <div class="status-row" id="sync-status"></div>
+      <div class="actions">
+        <button id="btn-sync" class="primary">立即同步</button>
+        <button id="btn-logout" class="ghost">退出登录</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="card-qr">
+      <h2>扫码登录</h2>
+      <p class="tip">请使用 <b>网易云音乐 App</b> 扫一扫（也可长按保存二维码后用 App「扫一扫 → 相册」识别）。</p>
+      <div class="qr-box">
+        <img id="qr-img" alt="登录二维码">
+      </div>
+      <p class="tip small" id="qr-state">正在生成二维码…</p>
+      <p class="tip small" id="qr-round"></p>
+      <div class="actions">
+        <button id="btn-refresh-qr" class="ghost">刷新二维码</button>
+      </div>
+    </section>
+
+    <section class="card" id="card-failed" style="display:none">
+      <h2>上次同步失败清单</h2>
+      <ul id="failed-list" class="failed-list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>设置</h2>
+      <div class="form">
+        <label>NCM API 地址</label>
+        <input id="cfg-ncmBase" type="text" placeholder="http://192.168.123.176:3000">
+        <div class="grid2">
+          <div>
+            <label>文字通知接口（UrlNotify）</label>
+            <input id="cfg-notifyUrl" type="text" placeholder="http://192.168.123.176:3004/api/v1/plugin/UrlNotify/send">
+          </div>
+          <div>
+            <label>通知 APIKEY</label>
+            <input id="cfg-notifyApikey" type="password" placeholder="UrlNotify 的 apikey">
+          </div>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>二维码推送接口（NcmQr）</label>
+            <input id="cfg-qrPushUrl" type="text" placeholder="http://192.168.123.176:3004/api/v1/plugin/NcmQr/qr">
+          </div>
+          <div>
+            <label>二维码推送 APIKEY（MP 的 API_TOKEN）</label>
+            <input id="cfg-qrPushApikey" type="password" placeholder="MoviePilot 的 API_TOKEN">
+          </div>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>回调密钥（与 NcmQr 配置一致）</label>
+            <input id="cfg-publicSecret" type="password" placeholder="随机字符串，两插件保持一致">
+          </div>
+          <div>
+            <label>二维码自动推送轮数</label>
+            <input id="cfg-qrMaxRounds" type="number" min="1" max="10">
+          </div>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>每日同步时间（点）</label>
+            <input id="cfg-syncHour" type="number" min="0" max="23">
+          </div>
+          <div>
+            <label>歌单名称</label>
+            <input id="cfg-playlistName" type="text">
+          </div>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>音质码率</label>
+            <select id="cfg-bitrate">
+              <option value="128000">128k</option>
+              <option value="192000">192k</option>
+              <option value="320000" selected>320k</option>
+              <option value="999000">无损</option>
+            </select>
+          </div>
+          <div>
+            <label>登录检查间隔（分钟）</label>
+            <input id="cfg-loginCheckIntervalMin" type="number" min="5">
+          </div>
+        </div>
+        <label class="check"><input id="cfg-notifyOnSuccess" type="checkbox"> 同步成功也发通知</label>
+        <div class="actions">
+          <button id="btn-save" class="primary">保存设置</button>
+          <span id="save-state" class="tip small"></span>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="static/app.js?v=0.2.0"></script>
+</body>
+</html>

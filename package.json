@@ -1,0 +1,10 @@
+{
+  "name": "songloft-ncm-daily",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "网易云日推同步插件 for Songloft",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  }
+}
