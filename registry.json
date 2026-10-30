@@ -1,0 +1,6 @@
+{
+  "name": "Cxquang 的网易云日推插件源",
+  "plugins": [
+    "https://raw.githubusercontent.com/Cxquang/songloft-ncm-daily/main/plugin.json"
+  ]
+}

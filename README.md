@@ -23,8 +23,13 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 
 ## 安装
 
-- 方式一（推荐）：从 [GitHub Releases](../../releases) 下载 `ncm-daily-v{version}.jsplugin.zip`，Songloft Web → 插件管理 → 上传该 zip
-- 方式二（源码构建）：`npm run build`（需 Node ≥ 18）→ 产物 `Release/ncm-daily-v{version}.jsplugin.zip`
+- 方式一（插件源在线安装）：Songloft Web → 插件市场 → 添加插件源，填入：
+  ```text
+  https://raw.githubusercontent.com/Cxquang/songloft-ncm-daily/main/registry.json
+  ```
+  即可在市场中搜索「网易云日推」安装与后续更新
+- 方式二（手动）：从 [GitHub Releases](../../releases) 下载 `ncm-daily-v{version}.jsplugin.zip`，Songloft Web → 插件管理 → 上传该 zip
+- 方式三（源码构建）：`npm run build`（需 Node ≥ 18）→ 产物 `Release/ncm-daily-v{version}.jsplugin.zip`
 
 ## 配置
 
@@ -65,11 +70,13 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 - 扫码确认必须由网易云音乐 App 完成（App 扫一扫，或相册识别）；微信扫码是否等效待复测定案，保底路径为网易 App 相册识别
 - 同步时解灰失败的歌会缺席当天歌单（失败清单见插件页与日报）
 
-## 发布（稳定后）
+## 发布新版本流程
 
-1. 代码推到 GitHub（Cxquang/songloft-ncm-daily）
-2. `Release/*.jsplugin.zip` 附到 GitHub Release，plugin.json 填 `download_url` 与 `updateUrl`
-3. 提交 registry.json 到插件源清单，即可被 Songloft 插件市场搜索到
+1. 改 `package.json` / `src/main.js` / `static/index.html` 中的版本号
+2. 改 `plugin.json` 的 `download_url`（指向新版本 zip 文件名）
+3. `npm run build` 构建（会自动回写 entryHash / zipHash 到 plugin.json）
+4. 提交推送代码；在 GitHub 创建 Release `v{version}` 并附上 `Release/` 下新 zip
+5. 插件源 `registry.json` 无需改动（固定指向 main 分支的 plugin.json），已安装用户即可在市场检测到更新
 
 ## License
 

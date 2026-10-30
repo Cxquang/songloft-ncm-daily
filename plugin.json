@@ -19,6 +19,7 @@
   ],
   "staticHash": false,
   "homepage": "https://github.com/Cxquang/songloft-ncm-daily",
+  "download_url": "https://github.com/Cxquang/songloft-ncm-daily/releases/latest/download/ncm-daily-v0.2.0.jsplugin.zip",
   "entryHash": "f6063d7ce450dc66228b4b77fb50a9d37350b913d10f28e17d847c477024dffd",
   "zipHash": "9e70afa4821b1b9c1b3a9778c9001dca117ca8f539fd26110081b23cbc2268e6"
 }
