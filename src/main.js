@@ -9,7 +9,7 @@
  *  - 文字通知走 MP UrlNotify 插件
  */
 
-const PLUGIN_VERSION = '0.2.1';
+const PLUGIN_VERSION = '0.3.0';
 
 const DEFAULT_CONFIG = {
   ncmBase: 'http://192.168.123.176:3000',
@@ -30,6 +30,7 @@ const SKEY = {
   config: 'ncmDaily.config',
   cookie: 'ncmDaily.cookie',
   pendingLogin: 'ncmDaily.pendingLogin',
+  recentKeys: 'ncmDaily.recentKeys',
   lastRunDate: 'ncmDaily.lastRunDate',
   lastSync: 'ncmDaily.lastSync'
 };
@@ -38,16 +39,36 @@ const CONFIG_FIELDS = ['ncmBase', 'notifyUrl', 'notifyApikey', 'qrPushUrl', 'qrP
   'syncHour', 'playlistName', 'bitrate', 'loginCheckIntervalMin', 'qrMaxRounds', 'notifyOnSuccess'];
 
 let config = Object.assign({}, DEFAULT_CONFIG);
-const state = { syncing: false, pending: null, syncAfterLogin: false };
+const state = { syncing: false, pending: null, recent: [], syncAfterLogin: false };
 let loginCache = { ok: null, profile: null, at: 0 };
 let scheduleTimer = null;
 let loginCheckTimer = null;
 let loginPollTimer = null;
+let pollSeen = {}; // key -> 上次轮询 code（变化才记日志，防刷屏）
 
-/* ================= 工具 ================= */
+/* ================= 日志（宿主日志 + 插件页内置日志缓冲） ================= */
 
-function log(msg) { songloft.log.info('[ncm-daily] ' + msg); }
-function logWarn(msg) { songloft.log.warn('[ncm-daily] ' + msg); }
+const LOG_BUF_MAX = 300;
+const logBuf = [];
+
+function pushLog(level, msg) {
+  const t = new Date();
+  const line = t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()) +
+    ' ' + pad2(t.getHours()) + ':' + pad2(t.getMinutes()) + ':' + pad2(t.getSeconds()) +
+    ' [' + level + '] ' + msg;
+  logBuf.push(line);
+  if (logBuf.length > LOG_BUF_MAX) logBuf.splice(0, logBuf.length - LOG_BUF_MAX);
+}
+
+function log(msg) { pushLog('INFO', msg); songloft.log.info('[ncm-daily] ' + msg); }
+function logWarn(msg) { pushLog('WARN', msg); songloft.log.warn('[ncm-daily] ' + msg); }
+
+function snippet(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    return s && s.length > 300 ? s.slice(0, 300) + '…' : String(s);
+  } catch (e) { return String(obj); }
+}
 
 async function storageGet(key, fallback) {
   try {
@@ -106,6 +127,7 @@ function parseBody(req) {
 function parseQuery(qs) {
   const out = {};
   if (!qs || typeof qs !== 'string') return out;
+  if (qs.charAt(0) === '?') qs = qs.slice(1);
   const parts = qs.split('&');
   for (let i = 0; i < parts.length; i++) {
     const pair = parts[i];
@@ -181,11 +203,22 @@ async function createQr() {
 }
 
 async function checkQr(key) {
-  const r = await ncmGet('/login/qr/check?key=' + encodeURIComponent(key), false);
-  const code = r && typeof r.code === 'number' ? r.code : 0;
+  // 带时间戳参数防中间层 HTTP 缓存（3 秒一次的相同 URL 可能被缓存住 801）
+  const r = await ncmGet('/login/qr/check?key=' + encodeURIComponent(key) + '&_t=' + Date.now(), false);
+  // 防御性解析：兼容顶层 {code,cookie} 与包一层 data 的响应形状
+  let body = r;
+  if (r && r.data && typeof r.data === 'object' && typeof r.data.code === 'number') body = r.data;
+  const code = body && typeof body.code === 'number' ? body.code : 0;
   let cookie = null;
-  if (code === 803 && r && typeof r.cookie === 'string') cookie = r.cookie;
-  return { code: code, cookie: cookie };
+  if (code === 803) {
+    let raw = body && body.cookie !== undefined ? body.cookie : (r && r.cookie);
+    if (typeof raw === 'string' && raw) cookie = raw;
+    else if (Array.isArray(raw) && raw.length) {
+      cookie = raw.filter(function (x) { return typeof x === 'string' && x; }).join('; ');
+    }
+  }
+  const message = body && body.message ? String(body.message) : '';
+  return { code: code, cookie: cookie, message: message };
 }
 
 async function getDailySongs() {
@@ -256,8 +289,30 @@ function qrMaxRounds() {
   return n > 0 ? n : 3;
 }
 
+const QR_CODE_NAMES = { 800: '二维码已过期', 801: '等待扫码', 802: '已扫码，等待手机确认', 803: '授权成功' };
+
+// 近 10 分钟内生成的所有 unikey 都参与轮询：用户扫企微里稍早的一张码也能落 cookie
+const RECENT_KEY_TTL_MS = 10 * 60 * 1000;
+
+function pruneRecent() {
+  const now = Date.now();
+  state.recent = (state.recent || []).filter(function (k) {
+    return k && k.key && k.createdAt && (now - k.createdAt) < RECENT_KEY_TTL_MS;
+  });
+}
+
+async function registerRecentKey(key) {
+  if (!key) return;
+  pruneRecent();
+  for (let i = 0; i < state.recent.length; i++) {
+    if (state.recent[i].key === key) return;
+  }
+  state.recent.push({ key: key, createdAt: Date.now() });
+  try { await storageSet(SKEY.recentKeys, state.recent); } catch (e) { }
+}
+
 function publicPending(p) {
-  return { key: p.key, qrimg: p.qrimg, round: p.round, maxRounds: qrMaxRounds(), createdAt: p.createdAt };
+  return { key: p.key, qrimg: p.qrimg, round: p.round, maxRounds: qrMaxRounds(), createdAt: p.createdAt, lastCheck: p.lastCheck || null };
 }
 
 /**
@@ -270,7 +325,8 @@ async function beginRelogin(reason) {
   const p = { key: q.key, qrimg: q.qrimg, qrurl: q.qrurl, createdAt: Date.now(), round: 1, push: reason !== 'page' };
   state.pending = p;
   await storageSet(SKEY.pendingLogin, p);
-  log('开始登录流程(' + reason + ') 第1/' + qrMaxRounds() + '轮');
+  await registerRecentKey(q.key);
+  log('开始登录流程(' + reason + ') 第1/' + qrMaxRounds() + '轮，key=' + String(q.key).slice(0, 8) + '…');
   if (reason === 'expiry') {
     const sent = await pushQrImage('网易云登录已过期，请扫码续期（2分钟内有效）');
     if (!sent) await notifyMP('网易云登录已过期', '二维码图片推送未配置或失败，请打开 Songloft「网易云日推」插件页面扫码。');
@@ -279,14 +335,61 @@ async function beginRelogin(reason) {
 }
 
 async function pollPendingLogin() {
-  const p = state.pending;
-  if (!p) return;
-  try {
-    const r = await checkQr(p.key);
-    if (r.code === 803 && r.cookie) { await onLoginSuccess(r.cookie); return; }
-    if (r.code === 800) { await onQrExpired(); }
-  } catch (e) {
-    logWarn('登录轮询异常: ' + e.message);
+  let p = state.pending;
+  if (!p || !p.key) {
+    // storage 为准：HTTP 处理与定时器可能不在同一 JS 上下文，内存 pending 会丢失
+    p = await storageGet(SKEY.pendingLogin, null);
+    if (p && p.key) {
+      state.pending = p;
+      log('从存储恢复进行中的登录流程，key=' + String(p.key).slice(0, 8) + '…');
+    } else {
+      p = null;
+    }
+  }
+  if (!state.recent || !state.recent.length) {
+    const rk = await storageGet(SKEY.recentKeys, null);
+    if (Array.isArray(rk) && rk.length) { state.recent = rk; pruneRecent(); }
+  }
+  pruneRecent();
+  if (!p && !state.recent.length) return;
+
+  const keys = [];
+  if (p && p.key) keys.push(p.key);
+  for (let i = 0; i < state.recent.length; i++) {
+    const k = state.recent[i] && state.recent[i].key;
+    if (k && keys.indexOf(k) < 0) keys.push(k);
+  }
+
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    let r;
+    try {
+      r = await checkQr(key);
+    } catch (e) {
+      logWarn('登录轮询异常(key=' + String(key).slice(0, 8) + '…): ' + e.message);
+      continue;
+    }
+    const isCurrent = !!(p && key === p.key);
+    const name = QR_CODE_NAMES[r.code] || ('code=' + r.code);
+    if (pollSeen[key] !== r.code) {
+      pollSeen[key] = r.code;
+      log('扫码状态[' + (isCurrent ? '当前码' : '近期码') + ']: ' + name + (r.message ? ' - ' + r.message : ''));
+    }
+    if (isCurrent) p.lastCheck = { code: r.code, at: Date.now(), message: r.message || name };
+
+    if (r.code === 803) {
+      if (r.cookie) { await onLoginSuccess(r.cookie); return; }
+      logWarn('扫码已授权(803)但未解析到 cookie，响应: ' + snippet({ code: r.code, message: r.message }));
+      continue;
+    }
+    if (r.code === 800) {
+      const before = state.recent.length;
+      state.recent = state.recent.filter(function (k) { return k.key !== key; });
+      if (state.recent.length !== before) {
+        try { await storageSet(SKEY.recentKeys, state.recent); } catch (e) { }
+      }
+      if (isCurrent) await onQrExpired();
+    }
   }
 }
 
@@ -294,13 +397,24 @@ async function onLoginSuccess(cookie) {
   await storageSet(SKEY.cookie, cookie);
   state.pending = null;
   await storageDel(SKEY.pendingLogin);
+  state.recent = [];
+  pollSeen = {};
+  try { await storageSet(SKEY.recentKeys, []); } catch (e) { }
   loginCache = { ok: null, profile: null, at: 0 };
   let name = '';
+  let stOk = false;
   try {
     const st = await getLoginStatus(true);
+    stOk = !!st.ok;
     if (st.profile) name = st.profile.nickname || '';
-  } catch (e) { /* 昵称获取失败不影响流程 */ }
-  log('扫码登录成功 ' + name);
+  } catch (e) {
+    logWarn('登录后状态校验异常: ' + e.message);
+  }
+  if (stOk) {
+    log('扫码登录成功' + (name ? '：' + name : '') + '（cookie 已保存，长度 ' + String(cookie).length + '）');
+  } else {
+    logWarn('cookie 已保存，但 /login/status 校验未通过——cookie 可能不完整或 NCM API 版本不匹配');
+  }
   await notifyMP('网易云登录成功', '已重新登录' + (name ? '：' + name : '') + '。');
   if (state.syncAfterLogin) {
     state.syncAfterLogin = false;
@@ -319,7 +433,8 @@ async function onQrExpired() {
     p.createdAt = Date.now(); p.round++;
     state.pending = p;
     await storageSet(SKEY.pendingLogin, p);
-    log('二维码过期，续发第 ' + p.round + '/' + max + ' 轮');
+    await registerRecentKey(q.key);
+    log('二维码过期，续发第 ' + p.round + '/' + max + ' 轮，key=' + String(q.key).slice(0, 8) + '…');
     if (p.push) {
       const sent = await pushQrImage('二维码已过期，重新发送（第 ' + p.round + '/' + max + ' 轮，2分钟内有效）');
       if (!sent) await notifyMP('二维码过期提醒', '请打开 Songloft 插件页面扫码（图片推送未配置或失败）。');
@@ -502,14 +617,30 @@ const router = createRouter();
 router.get('/api/status', async function () {
   const st = await getLoginStatus(false);
   const lastSync = await storageGet(SKEY.lastSync, null);
+  let pending = state.pending;
+  if (!pending || !pending.key) {
+    // storage 兜底：页面/接口与后台定时器可能不在同一 JS 上下文
+    const sp = await storageGet(SKEY.pendingLogin, null);
+    if (sp && sp.key) { state.pending = sp; pending = sp; }
+  }
   return jsonResponse({
     version: PLUGIN_VERSION,
     syncing: state.syncing,
     login: { ok: st.ok, profile: st.profile },
-    pending: state.pending ? publicPending(state.pending) : null,
+    pending: pending ? publicPending(pending) : null,
     lastSync: lastSync,
     config: config
   });
+});
+
+// 插件页内置日志（Songloft 宿主日志不便于查看时，插件页面直接看运行日志）
+router.get('/api/logs', async function (req) {
+  const q = parseQuery(req.query);
+  if (q.clear) {
+    logBuf.length = 0;
+    pushLog('INFO', '日志已清空');
+  }
+  return jsonResponse({ ok: true, lines: logBuf.slice() });
 });
 
 router.get('/api/config', async function () {
@@ -586,6 +717,9 @@ router.post('/api/logout', async function () {
   await storageSet(SKEY.cookie, '');
   await storageDel(SKEY.pendingLogin);
   state.pending = null;
+  state.recent = [];
+  pollSeen = {};
+  try { await storageSet(SKEY.recentKeys, []); } catch (e) { }
   loginCache = { ok: null, profile: null, at: 0 };
   log('已退出登录');
   return jsonResponse({ ok: true });
@@ -604,10 +738,14 @@ globalThis.onInit = async function () {
   if (saved && typeof saved === 'object') config = Object.assign({}, DEFAULT_CONFIG, saved);
   state.pending = await storageGet(SKEY.pendingLogin, null);
   if (state.pending && !state.pending.key) state.pending = null;
+  const rk = await storageGet(SKEY.recentKeys, null);
+  state.recent = Array.isArray(rk) ? rk : [];
+  pruneRecent();
   scheduleTimer = setInterval(function () { checkSchedule(); }, 60000);
   rebuildLoginTimer();
   loginPollTimer = setInterval(function () { pollPendingLogin(); }, 3000);
   log('v' + PLUGIN_VERSION + ' 已启动（ncm=' + ncmBase() + '，同步时间 ' + config.syncHour + ' 点）');
+  if (state.pending) log('恢复未完成的登录流程，key=' + String(state.pending.key).slice(0, 8) + '…，继续轮询扫码状态');
 };
 
 globalThis.onDeinit = async function () {

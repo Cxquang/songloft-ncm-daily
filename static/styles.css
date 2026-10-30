@@ -84,3 +84,11 @@ button.ghost:hover { color: var(--text); }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
 .failed-list { margin: 0; padding: 0 0 0 18px; font-size: 13px; color: var(--sub); line-height: 1.9; }
+.log-view {
+  background: #1e1e1e; color: #d4d4d4; border-radius: 8px;
+  padding: 12px; font-size: 12px; line-height: 1.7;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre-wrap; word-break: break-all;
+  max-height: 300px; overflow-y: auto; margin: 0 0 4px;
+}
+.log-empty { color: var(--sub); font-size: 13px; }

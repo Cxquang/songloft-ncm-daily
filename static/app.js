@@ -1,5 +1,5 @@
 /**
- * ncm-daily 插件前端（v0.2.1）
+ * ncm-daily 插件前端（v0.3.0）
  * 后端是唯一轮询者：前端只读 /api/status 渲染二维码与状态
  * 兼容宿主注入的 SongloftPlugin 桥；无桥时回退原生 fetch + Bearer token
  */
@@ -76,6 +76,15 @@
     }
   }
 
+  function qrStateText(p) {
+    var lc = p.lastCheck;
+    if (!lc || typeof lc.code !== 'number') return '等待扫码…';
+    if (lc.code === 802) return '✓ 已扫码，请在手机上点击确认';
+    if (lc.code === 803) return '✓ 授权成功，正在保存登录状态…';
+    if (lc.code === 800) return '二维码已过期，等待自动续发…';
+    return '等待扫码…';
+  }
+
   function renderPending(p, login) {
     var card = $('card-qr');
     if (login && login.ok && !p) { card.classList.add('hidden'); return; }
@@ -84,8 +93,8 @@
       if (p.key !== lastQrKey) {
         $('qr-img').src = p.qrimg;
         lastQrKey = p.key;
-        $('qr-state').textContent = '等待扫码…';
       }
+      $('qr-state').textContent = qrStateText(p);
       $('qr-round').textContent = '第 ' + p.round + ' / ' + p.maxRounds + ' 轮 · 过期自动续发';
     } else {
       $('qr-round').textContent = '';
@@ -222,6 +231,27 @@
     });
   }
 
+  /* ---------- 日志 ---------- */
+  var logTimer = null;
+
+  function refreshLogs() {
+    return apiGet('/api/logs').then(function (r) {
+      var el = $('log-view');
+      var lines = r.lines || [];
+      el.textContent = lines.length ? lines.join('\n') : '（暂无日志）';
+      el.scrollTop = el.scrollHeight;
+    }).catch(function () { /* 忽略：日志接口异常不影响页面 */ });
+  }
+
+  function startLogLoop() {
+    if (logTimer) return;
+    logTimer = setInterval(refreshLogs, 5000);
+  }
+
+  function clearLogs() {
+    apiGet('/api/logs?clear=1').then(refreshLogs).catch(function () { });
+  }
+
   /* ---------- 绑定 ---------- */
   document.addEventListener('DOMContentLoaded', function () {
     $('btn-sync').addEventListener('click', runSync);
@@ -235,6 +265,8 @@
     });
     $('btn-refresh-qr').addEventListener('click', startLogin);
     $('btn-save').addEventListener('click', saveConfig);
+    $('btn-log-refresh').addEventListener('click', refreshLogs);
+    $('btn-log-clear').addEventListener('click', clearLogs);
 
     refreshStatus().then(function (s) {
       if (s) {
@@ -245,5 +277,7 @@
         }
       }
     });
+    refreshLogs();
+    startLogLoop();
   });
 })();
