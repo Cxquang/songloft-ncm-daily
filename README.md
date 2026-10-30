@@ -61,7 +61,8 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 - 入库走宿主 `songloft.songs.create`（免 JWT，自动关联本插件），同一 `dedupKey` 重复入库为 UPSERT 更新
 - 播放地址在每日同步时解析（外链模式，起播快）；当天播放使用当日解析的 URL
 - 登录流程为后端驱动的状态机：每 3 秒轮询 `/login/qr/check`，803 落 cookie、800 续发新码（最多 `qrMaxRounds` 轮），前端页面只读状态
-- 二维码推送链路：ncm-daily → POST 图给 NcmQr（apikey）→ `media/upload`（经企微代理出口）→ 企微图片消息；关键词「登录」→ NcmQr 反向调免 JWT 端点 `/public/qr`（publicPaths + 密钥鉴权）取新码
+- 二维码推送链路：ncm-daily → POST 图给 NcmQr（apikey）→ `media/upload`（走企微 API 反代域名，与 MP 通知同链路）→ 企微图片消息；图片失败时 NcmQr 自动改发 text 带 `/public/qr-page` 回退链接（手机点开即二维码页）；关键词「登录」→ NcmQr 反向调免 JWT 端点 `/public/qr`（publicPaths + 密钥鉴权）取新码
+- `/public/qr-page`（免 JWT，`?secret=` 鉴权）：二维码 HTML 页，复用进行中的 pending（与企微推送同码），无 pending 或超 110s 时新建一轮；同时是企微图片推送失败时的回退链接入口
 - 同步失败/登录过期均会发 MP 通知，未配置时仅记录日志
 
 ## 已知限制

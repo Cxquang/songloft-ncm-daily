@@ -9,7 +9,7 @@
  *  - 文字通知走 MP UrlNotify 插件
  */
 
-const PLUGIN_VERSION = '0.2.0';
+const PLUGIN_VERSION = '0.2.1';
 
 const DEFAULT_CONFIG = {
   ncmBase: 'http://192.168.123.176:3000',
@@ -81,6 +81,14 @@ function jsonResponse(data, status) {
     statusCode: status || 200,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data)
+  };
+}
+
+function htmlResponse(html, status) {
+  return {
+    statusCode: status || 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' },
+    body: html
   };
 }
 
@@ -540,6 +548,38 @@ router.get('/public/qr', async function (req) {
   }
   const p = await beginRelogin('keyword');
   return jsonResponse({ ok: true, qrimg: p.qrimg, round: p.round, maxRounds: qrMaxRounds() });
+});
+
+// 免 JWT 端点：二维码 HTML 页（企微图片推送失败时的回退链接，手机点开即可看到二维码）
+// 复用正在进行中的 pending（与企微推送的是同一张码）；无 pending 或已过 TTL 时新建一轮
+router.get('/public/qr-page', async function (req) {
+  const q = parseQuery(req.query);
+  if (!config.publicSecret || String(q.secret || '') !== String(config.publicSecret)) {
+    return htmlResponse('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
+      '<body style="font-family:sans-serif;text-align:center;padding:48px 16px;color:#666">链接无效或已失效，请重新获取。</body></html>', 403);
+  }
+  const PENDING_TTL_MS = 110 * 1000; // 网易 unikey 有效期约 2 分钟，110s 内认为仍可扫
+  let p = state.pending;
+  if (!p || !p.createdAt || (Date.now() - p.createdAt) > PENDING_TTL_MS) {
+    try { p = await beginRelogin('keyword'); }
+    catch (e) { return htmlResponse('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>' +
+      '<body style="font-family:sans-serif;text-align:center;padding:48px 16px;color:#666">二维码获取失败：' + String(e.message) + '</body></html>', 500); }
+  }
+  const img = String(p.qrimg || '');
+  const html = '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>网易云登录二维码</title></head>' +
+    '<body style="margin:0;background:#f5f5f5;font-family:system-ui,-apple-system,sans-serif;text-align:center;color:#333">' +
+    '<div style="max-width:420px;margin:0 auto;padding:28px 16px">' +
+    '<h3 style="margin:0 0 6px">网易云音乐 · 登录二维码</h3>' +
+    '<p style="margin:0 0 18px;color:#888;font-size:13px">第 ' + Number(p.round) + '/' + qrMaxRounds() + ' 轮 · 约 2 分钟内有效</p>' +
+    (img ? '<img src="' + img + '" alt="二维码" style="width:100%;max-width:340px;background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.08)"/>' : '<p>二维码数据缺失</p>') +
+    '<p style="margin:16px 0 4px;font-size:14px;font-weight:600">怎么扫？</p>' +
+    '<p style="margin:0 0 4px;font-size:13px;color:#666">方式一：长按二维码 → 保存到相册 → 网易云 App「扫一扫」→ 相册识别</p>' +
+    '<p style="margin:0;font-size:13px;color:#666">方式二：用另一台设备直接扫屏幕上的二维码</p>' +
+    '<p style="margin:18px 0 0;font-size:12px;color:#aaa">若提示二维码已过期：重新点开本链接，或在企业微信回复「登录」</p>' +
+    '</div></body></html>';
+  return htmlResponse(html);
 });
 
 router.post('/api/logout', async function () {

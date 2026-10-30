@@ -1,5 +1,5 @@
 /**
- * ncm-daily 插件前端（v0.2.0）
+ * ncm-daily 插件前端（v0.2.1）
  * 后端是唯一轮询者：前端只读 /api/status 渲染二维码与状态
  * 兼容宿主注入的 SongloftPlugin 桥；无桥时回退原生 fetch + Bearer token
  */
