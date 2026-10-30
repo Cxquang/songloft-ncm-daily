@@ -1,6 +1,7 @@
 /**
- * ncm-daily 插件前端（v0.3.0）
- * 后端是唯一轮询者：前端只读 /api/status 渲染二维码与状态
+ * ncm-daily 插件前端（v0.4.0）
+ * 登录方式：手机号短信验证码（企微 /code 指令转发）或手动 Cookie
+ * 后端是唯一登录方：前端只读 /api/status 渲染状态
  * 兼容宿主注入的 SongloftPlugin 桥；无桥时回退原生 fetch + Bearer token
  */
 (function () {
@@ -62,7 +63,7 @@
   /* ---------- 状态渲染 ---------- */
   var statusTimer = null;
   var syncPollTimer = null;
-  var lastQrKey = null;
+  var lastSyncState = null;
 
   function renderLogin(login) {
     var el = $('login-status');
@@ -72,33 +73,20 @@
       if (p.avatarUrl) html = '<img class="avatar" src="' + esc(p.avatarUrl) + '" alt="">' + html;
       el.innerHTML = html;
     } else {
-      el.innerHTML = '<span class="badge bad">未登录</span> 请扫码登录后再使用';
+      el.innerHTML = '<span class="badge bad">未登录</span> 请用手机号验证码或 Cookie 登录';
     }
   }
 
-  function qrStateText(p) {
-    var lc = p.lastCheck;
-    if (!lc || typeof lc.code !== 'number') return '等待扫码…';
-    if (lc.code === 802) return '✓ 已扫码，请在手机上点击确认';
-    if (lc.code === 803) return '✓ 授权成功，正在保存登录状态…';
-    if (lc.code === 800) return '二维码已过期，等待自动续发…';
-    return '等待扫码…';
-  }
-
-  function renderPending(p, login) {
-    var card = $('card-qr');
-    if (login && login.ok && !p) { card.classList.add('hidden'); return; }
-    card.classList.remove('hidden');
-    if (p) {
-      if (p.key !== lastQrKey) {
-        $('qr-img').src = p.qrimg;
-        lastQrKey = p.key;
-      }
-      $('qr-state').textContent = qrStateText(p);
-      $('qr-round').textContent = '第 ' + p.round + ' / ' + p.maxRounds + ' 轮 · 过期自动续发';
+  function renderPhone(phone) {
+    phone = phone || {};
+    $('phone-label').textContent = phone.masked ? ('手机号 ' + phone.masked) : '未配置手机号（请先在设置里填写）';
+    if (phone.codeSentAt && phone.codeExpireAt) {
+      var left = Math.round((phone.codeExpireAt - Date.now()) / 1000);
+      $('code-meta').textContent = left > 0
+        ? '验证码已于 ' + new Date(phone.codeSentAt).toLocaleTimeString('zh-CN') + ' 发送，约 ' + Math.ceil(left / 60) + ' 分钟内有效'
+        : '上次验证码已过期（' + new Date(phone.codeSentAt).toLocaleTimeString('zh-CN') + '），可重新发送';
     } else {
-      $('qr-round').textContent = '';
-      $('qr-state').textContent = '点击「刷新二维码」生成登录二维码';
+      $('code-meta').textContent = '';
     }
   }
 
@@ -112,7 +100,7 @@
       el.innerHTML = '上次同步 <b>' + esc(time) + '</b>（' + esc(lastSync.trigger === 'manual' ? '手动' : (lastSync.trigger === 'relogin' ? '重登后自动' : '定时')) + '）：入库 <b>' +
         esc(lastSync.added) + '/' + esc(lastSync.total) + '</b> 首';
     } else if (lastSync.reason === 'login') {
-      el.innerHTML = '上次同步 <b>' + esc(time) + '</b>：<span class="badge bad">登录已过期</span> 二维码已推送';
+      el.innerHTML = '上次同步 <b>' + esc(time) + '</b>：<span class="badge bad">登录已过期</span> 验证码提示已推送';
     } else {
       el.innerHTML = '上次同步 <b>' + esc(time) + '</b>：<span class="badge bad">异常</span> ' + esc(lastSync.error || '');
     }
@@ -136,8 +124,12 @@
       $('btn-sync').disabled = !!s.syncing;
       $('btn-sync').textContent = s.syncing ? '同步中…' : '立即同步';
       renderLogin(s.login);
-      renderPending(s.pending, s.login);
+      renderPhone(s.phone);
       renderLastSync(s.lastSync);
+      var wasLogged = lastSyncState === true;
+      lastSyncState = !!(s.login && s.login.ok);
+      if (lastSyncState) $('code-state').textContent = '已登录，如需切换账号可先退出登录';
+      else if (wasLogged) $('code-state').textContent = '登录状态已失效，请重新获取验证码';
       return s;
     }).catch(function (e) {
       $('sync-status').textContent = '加载失败: ' + e.message;
@@ -145,11 +137,15 @@
     });
   }
 
+  // 每 3 秒轮询：捕获「企微 /code」侧完成的登录
   function startStatusLoop() {
     if (statusTimer) return;
     statusTimer = setInterval(function () {
       refreshStatus().then(function (s) {
-        if (s && s.login && s.login.ok && !s.pending) stopStatusLoop();
+        if (s && s.login && s.login.ok) {
+          stopStatusLoop();
+          refreshLogs();
+        }
       });
     }, 3000);
   }
@@ -158,15 +154,39 @@
     if (statusTimer) { clearInterval(statusTimer); statusTimer = null; }
   }
 
-  /* ---------- 登录 ---------- */
-  function startLogin() {
-    $('qr-state').textContent = '正在生成二维码…';
-    apiPost('/api/login/start', {}).then(function () {
+  /* ---------- 验证码登录 ---------- */
+  function sendCode() {
+    var tip = $('code-state');
+    tip.textContent = '请求中…';
+    apiPost('/api/login/send-code', {}).then(function (r) {
+      tip.textContent = r.message || '验证码已发送';
       return refreshStatus();
     }).then(function () {
       startStatusLoop();
+      refreshLogs();
     }).catch(function (e) {
-      $('qr-state').textContent = '生成失败: ' + e.message;
+      tip.textContent = '发送失败: ' + e.message;
+      refreshLogs();
+    });
+  }
+
+  function loginByCode() {
+    var input = $('code-input');
+    var code = String(input.value || '').trim();
+    var tip = $('code-state');
+    if (!/^\d{4,8}$/.test(code)) { tip.textContent = '请输入 4-8 位数字验证码'; return; }
+    tip.textContent = '登录中…';
+    apiPost('/api/login/code', { code: code }).then(function (r) {
+      var name = r.login && r.login.profile && r.login.profile.nickname;
+      tip.textContent = '登录成功' + (name ? '：' + name : '');
+      input.value = '';
+      stopStatusLoop();
+      return refreshStatus();
+    }).then(function () {
+      refreshLogs();
+    }).catch(function (e) {
+      tip.textContent = '登录失败: ' + e.message;
+      refreshLogs();
     });
   }
 
@@ -180,7 +200,6 @@
       syncPollTimer = setInterval(function () {
         apiGet('/api/status').then(function (s) {
           renderLogin(s.login);
-          renderPending(s.pending, s.login);
           if (!s.syncing) {
             clearInterval(syncPollTimer); syncPollTimer = null;
             refreshStatus();
@@ -195,37 +214,34 @@
   /* ---------- 配置 ---------- */
   function fillForm(cfg) {
     $('cfg-ncmBase').value = cfg.ncmBase || '';
-    $('cfg-notifyUrl').value = cfg.notifyUrl || '';
-    $('cfg-notifyApikey').value = cfg.notifyApikey || '';
-    $('cfg-qrPushUrl').value = cfg.qrPushUrl || '';
-    $('cfg-qrPushApikey').value = cfg.qrPushApikey || '';
+    $('cfg-phone').value = cfg.phone || '';
     $('cfg-publicSecret').value = cfg.publicSecret || '';
+    $('cfg-mpNotifyUrl').value = cfg.mpNotifyUrl || '';
+    $('cfg-mpNotifyApikey').value = cfg.mpNotifyApikey || '';
     $('cfg-syncHour').value = cfg.syncHour;
     $('cfg-playlistName').value = cfg.playlistName || '';
     $('cfg-bitrate').value = String(cfg.bitrate || 320000);
     $('cfg-loginCheckIntervalMin').value = cfg.loginCheckIntervalMin || 30;
-    $('cfg-qrMaxRounds').value = cfg.qrMaxRounds || 3;
     $('cfg-notifyOnSuccess').checked = !!cfg.notifyOnSuccess;
   }
 
   function saveConfig() {
     var body = {
       ncmBase: $('cfg-ncmBase').value.trim(),
-      notifyUrl: $('cfg-notifyUrl').value.trim(),
-      notifyApikey: $('cfg-notifyApikey').value.trim(),
-      qrPushUrl: $('cfg-qrPushUrl').value.trim(),
-      qrPushApikey: $('cfg-qrPushApikey').value.trim(),
+      phone: $('cfg-phone').value.trim(),
       publicSecret: $('cfg-publicSecret').value.trim(),
+      mpNotifyUrl: $('cfg-mpNotifyUrl').value.trim(),
+      mpNotifyApikey: $('cfg-mpNotifyApikey').value.trim(),
       syncHour: Number($('cfg-syncHour').value) || 0,
       playlistName: $('cfg-playlistName').value.trim() || '每日推荐',
       bitrate: Number($('cfg-bitrate').value) || 320000,
       loginCheckIntervalMin: Number($('cfg-loginCheckIntervalMin').value) || 30,
-      qrMaxRounds: Number($('cfg-qrMaxRounds').value) || 3,
       notifyOnSuccess: $('cfg-notifyOnSuccess').checked
     };
     apiPost('/api/config', body).then(function () {
       $('save-state').textContent = '已保存';
       setTimeout(function () { $('save-state').textContent = ''; }, 2000);
+      return refreshStatus();
     }).catch(function (e) {
       $('save-state').textContent = '保存失败: ' + e.message;
     });
@@ -252,30 +268,46 @@
     apiGet('/api/logs?clear=1').then(refreshLogs).catch(function () { });
   }
 
+  /* ---------- 手动 Cookie 登录 ---------- */
+  function saveCookie() {
+    var v = $('cookie-input').value.trim();
+    var tip = $('cookie-state');
+    if (!v) { tip.textContent = '请先粘贴 Cookie'; return; }
+    tip.textContent = '校验中…';
+    apiPost('/api/login/cookie', { cookie: v }).then(function (r) {
+      tip.textContent = '已保存并通过校验' + (r.login && r.login.profile && r.login.profile.nickname ? '：' + r.login.profile.nickname : '');
+      $('cookie-input').value = '';
+      stopStatusLoop();
+      return refreshStatus();
+    }).then(function () {
+      refreshLogs();
+    }).catch(function (e) {
+      tip.textContent = '失败: ' + e.message;
+    });
+  }
+
   /* ---------- 绑定 ---------- */
   document.addEventListener('DOMContentLoaded', function () {
     $('btn-sync').addEventListener('click', runSync);
     $('btn-logout').addEventListener('click', function () {
       apiPost('/api/logout', {}).then(function () {
-        lastQrKey = null;
+        $('code-state').textContent = '';
         return refreshStatus();
-      }).then(function () {
-        startLogin();
       }).catch(function () { });
     });
-    $('btn-refresh-qr').addEventListener('click', startLogin);
+    $('btn-send-code').addEventListener('click', sendCode);
+    $('btn-login-code').addEventListener('click', loginByCode);
+    $('code-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') loginByCode();
+    });
+    $('btn-save-cookie').addEventListener('click', saveCookie);
     $('btn-save').addEventListener('click', saveConfig);
     $('btn-log-refresh').addEventListener('click', refreshLogs);
     $('btn-log-clear').addEventListener('click', clearLogs);
 
     refreshStatus().then(function (s) {
-      if (s) {
-        fillForm(s.config);
-        if ((!s.login || !s.login.ok)) {
-          if (!s.pending) startLogin();
-          startStatusLoop();
-        }
-      }
+      if (s) fillForm(s.config);
+      if (s && !(s.login && s.login.ok)) startStatusLoop();
     });
     refreshLogs();
     startLogLoop();

@@ -71,10 +71,21 @@ button.ghost:hover { color: var(--text); }
 .tip { color: var(--sub); font-size: 13px; line-height: 1.6; margin: 0 0 12px; }
 .tip.small { font-size: 12px; }
 
-.qr-box { display: flex; justify-content: center; padding: 8px 0; }
-.qr-box img { width: 220px; height: 220px; border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+.code-box { display: flex; gap: 10px; align-items: center; margin-top: 12px; }
+.code-box input {
+  flex: 1; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); color: var(--text); font-size: 16px; letter-spacing: 2px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.code-box input:focus { outline: 1px solid var(--primary); }
 
 .form label { display: block; font-size: 13px; color: var(--sub); margin: 12px 0 6px; }
+.cookie-box textarea {
+  width: 100%; min-height: 92px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); color: var(--text); font-size: 13px; resize: vertical; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.cookie-box textarea:focus { outline: 1px solid var(--primary); }
 .form input[type="text"], .form input[type="password"], .form input[type="number"], .form select {
   width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--card); color: var(--text); font-size: 14px;

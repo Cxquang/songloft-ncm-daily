@@ -2,14 +2,16 @@
 
 Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Songloft 曲库与歌单，配合 miot 插件即可对小爱音箱说「播放歌单每日推荐」。
 
+登录方式（v0.4.0 起已移除扫码登录）：**手机号短信验证码**（经 MoviePilot NcmQr 插件转发企业微信 `/code` 指令）或**手动 Cookie**。
+
 ## 功能
 
 - 每日定时（默认 7 点）拉取网易云日推 30 首，逐首解析播放地址（走 NCM API 内置解灰，VIP 歌可播），入库为外链歌曲（`dedupKey = ncm:{网易id}`，幂等更新）
 - 自动全量刷新「每日推荐」歌单（先清后加）
-- 插件页扫码登录（**网易云音乐 App** 扫一扫，也支持保存二维码后用 App「扫一扫 → 相册」识别）
-- 后台轮询扫码状态：页面不开也能在扫码后自动落 cookie
-- 登录过期自动检测：生成二维码经 MP NcmQr 插件推送**企微图片**，过期自动续发（默认 3 轮）后停止，改由企微回复「登录」关键词触发
-- 同步日报/失败清单推送（UrlNotify 文字通道）
+- 手机号验证码登录：插件页点「发送验证码」→ 网易云向配置的手机号发短信 → 同时经 NcmQr 推送企业微信提示 → 在企业微信回复 `/code 123456` 即完成登录；也可直接在插件页手动填入验证码
+- Cookie 登录：粘贴 `music.163.com` 的完整 Cookie（含 `MUSIC_U`），保存时用 `/login/status` 校验
+- 登录过期自动检测：按间隔校验 cookie，失效时自动请求短信验证码并推送企微提示（后台也生效，页面不开同样能登录）
+- 同步日报/失败清单推送（经 NcmQr 文字通知）
 - 支持手动「立即同步」；重登成功后自动补跑当天同步
 
 ## 依赖
@@ -17,8 +19,7 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 | 组件 | 说明 |
 |---|---|
 | [moefurina/ncm-api](https://hub.docker.com/r/moefurina/ncm-api) | 网易云 API 容器，默认端口 3000，`ENABLE_GENERAL_UNBLOCK=true` |
-| MoviePilot + UrlNotify 插件 | 文字通知借道（可选） |
-| MoviePilot + NcmQr 插件 | 登录二维码企微图片推送 + 「登录」关键词响应（可选） |
+| MoviePilot + [NcmQr 插件](https://github.com/Cxquang/MoviePilot-Plugins) | 文字通知推送 + `/code` 指令转发（可选，但验证码登录链路依赖它） |
 | Songloft 宿主 | ≥ 2.11.0 |
 
 ## 安装
@@ -38,53 +39,70 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 | 配置项 | 说明 | 默认 |
 |---|---|---|
 | ncmBase | NCM API 地址 | http://192.168.123.176:3000 |
-| notifyUrl | MP 文字通知接口（UrlNotify） | http://192.168.123.176:3004/api/v1/plugin/UrlNotify/send |
-| notifyApikey | UrlNotify 的 apikey | 空（不通知） |
-| qrPushUrl | MP 二维码推送接口（NcmQr） | http://192.168.123.176:3004/api/v1/plugin/NcmQr/qr |
-| qrPushApikey | MP 的 API_TOKEN | 空（不推图） |
-| publicSecret | 回调密钥，与 NcmQr 配置一致（免 JWT 端点鉴权） | 空（关键词取码不可用） |
-| qrMaxRounds | 二维码自动推送轮数 | 3 |
+| phone | 网易云账号手机号（收短信验证码，支持 `13800138000` 或 `+8613800138000`） | 空（不填无法验证码登录） |
+| publicSecret | 回调密钥，与 NcmQr 插件配置一致（`/public/*` 免 JWT 端点鉴权） | 空（企微 `/code` 不可用） |
+| mpNotifyUrl | NcmQr 文字通知接口 | http://192.168.123.176:3004/api/v1/plugin/NcmQr/notify |
+| mpNotifyApikey | MoviePilot 的 API_TOKEN | 空（不通知） |
 | syncHour | 每日同步时间（小时，0-23） | 7 |
 | playlistName | 目标歌单名 | 每日推荐 |
 | bitrate | 音质码率 | 320000 |
 | loginCheckIntervalMin | 登录状态检查间隔（分钟） | 30 |
 | notifyOnSuccess | 同步成功是否也通知 | true |
 
+> 从旧版本升级时，`qrPushUrl / qrPushApikey` 会自动迁移为 `mpNotifyUrl / mpNotifyApikey`（把结尾 `/qr` 换成 `/notify`），无需重新填写。
+
 ## 使用
 
-1. 打开插件页 → 扫码登录（网易云音乐 App）
-2. 点「立即同步」验证一遍全链路
-3. 之后每天定点自动同步；登录过期会收到通知，回插件页扫码即可
+1. 在「设置」里填好手机号、回调密钥与 NcmQr 通知接口/APIKEY 并保存
+2. 登录二选一：
+   - **验证码**：点「发送验证码」→ 收到短信后，在企业微信回复 `/code 123456`，或直接在插件页输入验证码点「登录」
+   - **Cookie**：粘贴 `music.163.com` 的完整 Cookie（至少含 `MUSIC_U`）→「保存并校验」
+3. 点「立即同步」验证一遍全链路，之后每天定点自动同步；登录过期会自动推送验证码提示
+
+## 登录链路
+
+```text
+插件/定时检查发现未登录
+  → GET /captcha/sent（网易云向手机号发短信验证码）
+  → POST NcmQr /notify（“请在企业微信回复 /code 验证码”）
+  → 企业微信发送 /code 123456
+  → NcmQr 调 ncm-daily /public/code?secret=...&code=123456
+  → POST /login/cellphone（拿到 cookie）
+  → GET /login/status 校验通过后落库，失败自动回滚
+```
 
 ## 日志与排障
 
-- **插件页自带「运行日志」卡片**（v0.3.0+）：每 5 秒自动刷新，扫码状态（等待扫码/已扫码待确认/授权成功）、二维码轮次、cookie 落库、同步结果全部可见；右上「清空」按钮可重置
+- **插件页自带「运行日志」卡片**：每 5 秒自动刷新，验证码发送、企微推送、`/code` 转发登录、Cookie 校验、同步结果全部可见；右上「清空」按钮可重置
 - **宿主日志**：Docker 部署执行 `docker logs -f songloft`，插件日志以 `[ncm-daily]` 前缀输出；飞牛 fnOS 应用商店版在「应用管理 → SongLoft」界面查看容器日志
-- 扫码后若仍显示未登录，先看运行日志中「扫码状态」一行是否推进到「授权成功」：未推进说明轮询没收到 803（检查 ncmBase 连通性）；推进了但未登录说明 cookie 校验失败（日志会明确提示）
+- 企微 `/code` 无响应时依次检查：手机号是否已配置、`publicSecret` 是否与 NcmQr 一致、NcmQr 的 `ncm_base` 是否指向本插件入口、验证码是否超过 5 分钟
 
-## v0.3.0 变更
+## v0.4.0 变更
 
-修复「企微扫码登录成功但插件仍显示未登录」的问题，根因是扫码授权(803)未被后台轮询稳定捕获：
+扫码登录（`/login/qr/*`）经验证在网络环境下不可用，整体改为手机号短信验证码登录，并移除全部扫码相关代码：
 
-- **近期码全量轮询**：10 分钟内生成的所有二维码 key 都参与轮询——扫企微里稍早推送的那张码也能落 cookie（此前只轮询最新一张，扫旧码必失败）
-- **防御性响应解析**：`/login/qr/check` 兼容顶层与 `data` 包裹两种形状、cookie 字符串与数组，不再静默丢弃 803
-- **防 HTTP 缓存**：轮询请求带时间戳参数，避免中间层缓存把 801 响应钉死
-- **storage 为准恢复 pending**：HTTP 处理与后台定时器即使不在同一 JS 上下文，轮询也能从存储恢复进行中的登录流程
-- **插件页内置运行日志** + 扫码状态实时显示（已扫码待确认/授权成功）
+- 新增 `POST /api/login/send-code`（页面发送验证码并推送企微提示）、`POST /api/login/code`（页面手动填验证码）
+- 新增免 JWT 端点 `GET/POST /public/send-code`、`/public/code?secret=`，供 NcmQr 在企业微信 `/code` 指令后转发验证
+- 登录成功用 `/login/status` 校验，失败自动回滚上一份 cookie；60 秒内不重复请求短信
+- 登录失效自动请求验证码并推送企微（替代原二维码续发轮询）
+- 配置项 `qrPushUrl / qrPushApikey / qrMaxRounds` 移除，改为 `phone / mpNotifyUrl / mpNotifyApikey`，旧配置自动迁移
+- 保留手动 Cookie 登录；自测 40 项通过
+
+## v0.3.2 及更早
+
+历史版本为扫码 + Cookie 登录（v0.3.0 修复旧二维码轮询、v0.3.1 防 NCM API 缓存、v0.3.2 增加 Cookie 兜底），详见 git 历史。
 
 ## 工作原理
 
 - 入库走宿主 `songloft.songs.create`（免 JWT，自动关联本插件），同一 `dedupKey` 重复入库为 UPSERT 更新
 - 播放地址在每日同步时解析（外链模式，起播快）；当天播放使用当日解析的 URL
-- 登录流程为后端驱动的状态机：每 3 秒轮询 `/login/qr/check`，803 落 cookie、800 续发新码（最多 `qrMaxRounds` 轮），前端页面只读状态
-- 二维码推送链路：ncm-daily → POST 图给 NcmQr（apikey）→ `media/upload`（走企微 API 反代域名，与 MP 通知同链路）→ 企微图片消息；图片失败时 NcmQr 自动改发 text 带 `/public/qr-page` 回退链接（手机点开即二维码页）；关键词「登录」→ NcmQr 反向调免 JWT 端点 `/public/qr`（publicPaths + 密钥鉴权）取新码
-- `/public/qr-page`（免 JWT，`?secret=` 鉴权）：二维码 HTML 页，复用进行中的 pending（与企微推送同码），无 pending 或超 110s 时新建一轮；同时是企微图片推送失败时的回退链接入口
-- 同步失败/登录过期均会发 MP 通知，未配置时仅记录日志
+- NCM API 对所有 GET 200 响应按完整 URL 缓存 2 分钟，因此所有请求统一追加 `_t` 时间戳防缓存
+- 同步失败/登录过期均会发 NcmQr 文字通知，未配置时仅记录日志
 
 ## 已知限制
 
-- 网易云扫码 cookie 有效期数周不等，无法自动续期，过期后需扫码
-- 扫码确认必须由网易云音乐 App 完成（App 扫一扫，或相册识别）；微信扫码是否等效待复测定案，保底路径为网易 App 相册识别
+- 网易云短信验证码有效期约 5 分钟，过期需重新发送
+- 验证码登录要求 NcmQr 与 ncm-daily 双向可达（NcmQr 能访问 ncm-daily 的 `/public/*`）
 - 同步时解灰失败的歌会缺席当天歌单（失败清单见插件页与日报）
 
 ## 发布新版本流程
