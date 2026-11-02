@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>网易云日推</title>
   <base href="/">
-  <link rel="stylesheet" href="static/styles.css?v=0.4.0">
+  <link rel="stylesheet" href="static/styles.css?v=0.5.0">
 </head>
 <body>
   <div class="wrap">
     <header class="header">
-      <img class="icon" src="static/icon.svg?v=0.4.0" alt="">
+      <img class="icon" src="static/icon.svg?v=0.5.0" alt="">
       <div>
         <h1>网易云日推</h1>
         <p class="sub">每日同步网易云「每日推荐」到曲库 <span id="ver"></span></p>
@@ -21,6 +21,7 @@
       <h2>状态</h2>
       <div class="status-row" id="login-status"></div>
       <div class="status-row" id="sync-status"></div>
+      <div class="status-row" id="refresh-status"></div>
       <div class="actions">
         <button id="btn-sync" class="primary">立即同步</button>
         <button id="btn-logout" class="ghost">退出登录</button>
@@ -50,8 +51,10 @@
       </div>
       <div class="actions">
         <button id="btn-save-cookie" class="primary">保存并校验</button>
+        <button id="btn-refresh-cookie" class="ghost">立即续期</button>
         <span id="cookie-state" class="tip small"></span>
       </div>
+      <p class="tip small">「立即续期」调用网易云 <b>/login/refresh</b> 换取最新 Cookie 并保存；设置里的「Cookie 自动续期间隔」会按周期自动做同样的事，避免 Cookie 隔天失效。</p>
     </section>
 
     <section class="card" id="card-failed" style="display:none">
@@ -120,6 +123,9 @@
           </div>
         </div>
         <label class="check"><input id="cfg-notifyOnSuccess" type="checkbox"> 同步成功也发通知</label>
+        <label>Cookie 自动续期间隔（分钟，0 = 关闭）</label>
+        <input id="cfg-cookieRefreshIntervalMin" type="number" min="0" step="10" placeholder="默认 360（= 6 小时）">
+        <p class="tip small">按该间隔调用网易云 <b>/login/refresh</b> 续期登录态并保存返回的最新 Cookie；登录检查发现失效时也会先自动续期一次，失败才走短信验证码。</p>
         <div class="actions">
           <button id="btn-save" class="primary">保存设置</button>
           <span id="save-state" class="tip small"></span>
@@ -128,6 +134,6 @@
     </section>
   </div>
 
-  <script src="static/app.js?v=0.4.0"></script>
+  <script src="static/app.js?v=0.5.0"></script>
 </body>
 </html>

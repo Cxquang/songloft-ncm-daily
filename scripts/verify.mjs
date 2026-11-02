@@ -1,5 +1,5 @@
 /**
- * ncm-daily v0.4.0 自测：mock songloft 宿主 + fetch，验证「手机号短信验证码 + Cookie」登录链路
+ * ncm-daily v0.5.0 自测：mock songloft 宿主 + fetch，验证「手机号短信验证码 + Cookie + Cookie 续期」链路
  * 1. 模块加载 + onInit（定时器就绪，未配置手机号给出告警）
  * 2. POST /api/config 保存手机号 / 回调密钥 / NcmQr 通知接口
  * 3. POST /api/login/send-code：请求 /captcha/sent + 推送企微提示（NcmQr /notify）
@@ -7,7 +7,9 @@
  * 5. GET /public/code 密钥错误 → 403；企业微信 /code 转发的验证码 → /login/cellphone → cookie 落库并通过 /login/status 校验
  * 6. 非法验证码格式 → 400；错误验证码 → 400 且 cookie 回滚
  * 7. POST /api/login/cookie 手动 Cookie 登录
- * 8. /api/status 版本与手机号脱敏；/api/logout 清空 cookie；/api/logs 与 ?clear=1
+ * 8. POST /api/login/refresh 手动续期：/login/refresh 返回最新 cookie，合并原字段后保存并通过校验
+ * 9. 60 秒调度 tick：到期自动续期；续期失败保留原 cookie；登录检查失效先续期恢复、彻底失效才清 cookie 走短信兜底
+ * 10. /api/status 版本与手机号脱敏、cookieRefresh 状态；/api/logout 清空 cookie；/api/logs 与 ?clear=1
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -63,6 +65,9 @@ const captchaCalls = [];
 const notifyCalls = [];
 let statusCookieSeen = '';
 let loginAttempts = [];
+const refreshCalls = [];
+let refreshFail = false;
+let statusFailTimes = 0;
 
 globalThis.fetch = async function (url, opts) {
   const u = String(url);
@@ -82,9 +87,15 @@ globalThis.fetch = async function (url, opts) {
     }
     return resp({ code: 503, message: '验证码错误或已过期' });
   }
+  if (u.includes('/login/refresh')) {
+    refreshCalls.push({ url: u, cookie: headers.Cookie || '' });
+    if (refreshFail) return resp({ code: 301, message: '未登录' });
+    return resp({ code: 200, cookie: 'MUSIC_U=REFRESHED; __csrf=NEWCSRF' });
+  }
   if (u.includes('/login/status')) {
     statusCookieSeen = headers.Cookie || '';
-    return resp(/MUSIC_U=FAKE_MAIN_COOKIE|MUSIC_U=MANUAL_COOKIE/.test(statusCookieSeen)
+    if (statusFailTimes > 0) { statusFailTimes--; return resp({ data: { code: 301 } }); }
+    return resp(/MUSIC_U=FAKE_MAIN_COOKIE|MUSIC_U=MANUAL_COOKIE|MUSIC_U=REFRESHED/.test(statusCookieSeen)
       ? { data: { code: 200, profile: { userId: 42, nickname: '测试用户' } } }
       : { data: { code: 301 } });
   }
@@ -167,7 +178,7 @@ ok(notifyCalls[1].body.title === '网易云登录成功', '登录成功通知标
 
 /* ---------- 状态与非法验证码 ---------- */
 r = await call('GET', '/api/status');
-ok(r.status === 200 && r.data.version === '0.4.0', '/api/status：版本 0.4.0');
+ok(r.status === 200 && r.data.version === '0.5.0', '/api/status：版本 0.5.0');
 ok(r.data.login.ok === true, '/api/status：显示已登录');
 ok(r.data.phone.masked === '138****8000', '/api/status：手机号脱敏');
 ok(r.data.phone.codeExpireAt > r.data.phone.codeSentAt, '/api/status：验证码有效期已计算');
@@ -181,12 +192,54 @@ ok(r.status === 400 && /验证码登录失败/.test(r.data.error), '错误验证
 ok(String(store.get('ncmDaily.cookie')).indexOf('MUSIC_U=FAKE_MAIN_COOKIE') >= 0, '登录失败后 cookie 回滚为上一份有效 cookie');
 
 /* ---------- 手动 Cookie 登录 ---------- */
-r = await call('POST', '/api/login/cookie', { body: { cookie: 'MUSIC_U=MANUAL_COOKIE' } });
+r = await call('POST', '/api/login/cookie', { body: { cookie: 'MUSIC_U=MANUAL_COOKIE; _ntes_nuid=KEEP' } });
 ok(r.status === 200 && r.data.ok, 'POST /api/login/cookie：手动 Cookie 登录成功');
 ok(String(store.get('ncmDaily.cookie')).indexOf('MUSIC_U=MANUAL_COOKIE') >= 0, '手动 Cookie 已落库');
 
 r = await call('POST', '/api/login/cookie', { body: { cookie: 'foo=bar' } });
 ok(r.status === 400 && /MUSIC_U/.test(r.data.error), '不含 MUSIC_U 的 Cookie 被拒绝');
+
+/* ---------- Cookie 自动续期（v0.5.0） ---------- */
+r = await call('POST', '/api/login/refresh');
+ok(r.status === 200 && r.data.ok, 'POST /api/login/refresh：手动续期成功');
+ok(refreshCalls.length === 1 && refreshCalls[0].cookie.indexOf('MUSIC_U=MANUAL_COOKIE') >= 0, '续期请求携带当前 Cookie');
+ok(String(store.get('ncmDaily.cookie')).indexOf('MUSIC_U=REFRESHED') >= 0, '续期返回的最新 MUSIC_U 已保存');
+ok(String(store.get('ncmDaily.cookie')).indexOf('_ntes_nuid=KEEP') >= 0, '续期与原 Cookie 合并，保留原有字段');
+
+r = await call('GET', '/api/status');
+ok(r.data.cookieRefresh && r.data.cookieRefresh.intervalMin === 360, '/api/status：默认续期间隔 360 分钟');
+ok(r.data.cookieRefresh.lastAt > 0, '/api/status：上次续期时间已记录');
+
+// 模拟 60 秒调度 tick：清掉 lastRefreshAt 后应自动续期（intervals[0]=60s 调度，intervals[1]=登录检查）
+function tick(i) { intervals[i].fn(); return new Promise(function (res) { setTimeout(res, 150); }); }
+
+store.set('ncmDaily.lastRefreshAt', 0);
+await tick(0);
+ok(refreshCalls.length === 2, '60 秒调度：到期后自动调用 /login/refresh');
+
+refreshFail = true;
+store.set('ncmDaily.lastRefreshAt', 0);
+await tick(0);
+ok(refreshCalls.length === 3, '下个周期到期再次发起续期请求');
+ok(String(store.get('ncmDaily.cookie')).indexOf('MUSIC_U=REFRESHED') >= 0, '续期失败保留原 Cookie');
+refreshFail = false;
+
+statusFailTimes = 1;
+refreshCalls.length = 0;
+const captchaBefore = captchaCalls.length;
+await tick(1);
+ok(refreshCalls.length === 1, '登录检查发现失效：先自动尝试续期');
+ok(String(store.get('ncmDaily.cookie')).indexOf('MUSIC_U=REFRESHED') >= 0, '续期成功：登录态恢复，Cookie 未被清空');
+ok(captchaCalls.length === captchaBefore, '续期成功时不请求短信验证码');
+
+statusFailTimes = 3;
+refreshFail = true;
+const notifyBefore = notifyCalls.length;
+await tick(1);
+ok(String(store.get('ncmDaily.cookie') || '').indexOf('MUSIC_U') < 0, '续期也失败：清空 Cookie 走短信兜底');
+ok(notifyCalls.length === notifyBefore + 1, '企微验证码提示已推送');
+refreshFail = false;
+statusFailTimes = 0;
 
 /* ---------- 日志与退出 ---------- */
 r = await call('GET', '/api/logs');
@@ -201,7 +254,10 @@ ok(r.status === 200 && r.data.ok, 'POST /api/logout：退出成功');
 r = await call('GET', '/api/status');
 ok(r.data.login.ok === false, '退出后 /api/status：显示未登录');
 
+r = await call('POST', '/api/login/refresh');
+ok(r.status === 400 && /尚未登录/.test(r.data.error), '未登录时手动续期返回 400');
+
 r = await call('GET', '/api/sync/run', {});
 ok(r.status === 404, 'GET /api/sync/run：方法不匹配返回 404');
 
-console.log('\n全部 ' + pass + ' 项自测通过（ncm-daily v0.4.0）');
+console.log('\n全部 ' + pass + ' 项自测通过（ncm-daily v0.5.0）');

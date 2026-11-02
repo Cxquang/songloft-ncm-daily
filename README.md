@@ -10,7 +10,8 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 - 自动全量刷新「每日推荐」歌单（先清后加）
 - 手机号验证码登录：插件页点「发送验证码」→ 网易云向配置的手机号发短信 → 同时经 NcmQr 推送企业微信提示 → 在企业微信回复 `/code 123456` 即完成登录；也可直接在插件页手动填入验证码
 - Cookie 登录：粘贴 `music.163.com` 的完整 Cookie（含 `MUSIC_U`），保存时用 `/login/status` 校验
-- 登录过期自动检测：按间隔校验 cookie，失效时自动请求短信验证码并推送企微提示（后台也生效，页面不开同样能登录）
+- **Cookie 自动续期保活（v0.5.0）**：按配置间隔（默认 6 小时）自动调用 `/login/refresh` 续期登录态，把返回的最新 Cookie 与原 Cookie 合并后保存并校验，失败自动回滚；插件页也可点「立即续期」手动执行
+- 登录过期自动检测：按间隔校验 cookie，失效时**先自动尝试续期**，续期失败才请求短信验证码并推送企微提示（后台也生效，页面不开同样能登录）
 - 同步日报/失败清单推送（经 NcmQr 文字通知）
 - 支持手动「立即同步」；重登成功后自动补跑当天同步
 
@@ -47,6 +48,7 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 | playlistName | 目标歌单名 | 每日推荐 |
 | bitrate | 音质码率 | 320000 |
 | loginCheckIntervalMin | 登录状态检查间隔（分钟） | 30 |
+| cookieRefreshIntervalMin | Cookie 自动续期间隔（分钟，0 = 关闭）：周期调用 `/login/refresh` 并保存返回的最新 Cookie | 360 |
 | notifyOnSuccess | 同步成功是否也通知 | true |
 
 > 从旧版本升级时，`qrPushUrl / qrPushApikey` 会自动迁移为 `mpNotifyUrl / mpNotifyApikey`（把结尾 `/qr` 换成 `/notify`），无需重新填写。
@@ -76,6 +78,16 @@ Songloft 插件：每日自动同步网易云音乐的「每日推荐」到 Song
 - **插件页自带「运行日志」卡片**：每 5 秒自动刷新，验证码发送、企微推送、`/code` 转发登录、Cookie 校验、同步结果全部可见；右上「清空」按钮可重置
 - **宿主日志**：Docker 部署执行 `docker logs -f songloft`，插件日志以 `[ncm-daily]` 前缀输出；飞牛 fnOS 应用商店版在「应用管理 → SongLoft」界面查看容器日志
 - 企微 `/code` 无响应时依次检查：手机号是否已配置、`publicSecret` 是否与 NcmQr 一致、NcmQr 的 `ncm_base` 是否指向本插件入口、验证码是否超过 5 分钟
+
+## v0.5.0 变更
+
+Cookie 登录态经常「隔天失效」而浏览器仍在线（网易按 cookie + IP + 使用行为做风控，且服务端会滚动续期会话），本版本新增 **Cookie 自动续期保活**：
+
+- 新增配置 `cookieRefreshIntervalMin`（默认 360 分钟，0 = 关闭）：按间隔调用网易云 `/login/refresh`，把返回的最新 Cookie 与原 Cookie **字段合并**后保存（不丢 `_ntes_nuid` 等原有字段），再用 `/login/status` 校验，校验失败自动回滚原 Cookie
+- 续期时间戳 `lastRefreshAt` 持久化，插件重启后到期立即补跑；新登录成功后自动跳过本轮续期
+- 登录检查发现失效时先自动续期一次，成功即恢复登录态，失败才清空 Cookie 走短信验证码兜底
+- 新增 `POST /api/login/refresh` 与插件页「立即续期」按钮；`/api/status` 新增 `cookieRefresh` 状态（间隔 / 上次 / 下次），状态卡片实时展示
+- 失败时保留原 Cookie 等待下个周期，避免对 `/login/refresh` 高频重试触发风控
 
 ## v0.4.0 变更
 

@@ -1,8 +1,8 @@
 {
   "name": "网易云日推",
   "name_en": "songloft-ncm-daily",
-  "version": "0.4.0",
-  "description": "每日自动同步网易云音乐「每日推荐」到 Songloft 曲库与歌单，支持手机号短信验证码登录（经 MoviePilot NcmQr 转发企业微信 /code 指令）、Cookie 登录、登录过期监控与通知转发。",
+  "version": "0.5.0",
+  "description": "每日自动同步网易云音乐「每日推荐」到 Songloft 曲库与歌单，支持手机号短信验证码登录（经 MoviePilot NcmQr 转发企业微信 /code 指令）、Cookie 登录、Cookie 自动续期保活与登录过期监控通知。",
   "author": "Cxquang",
   "license": "MIT",
   "entryPath": "ncm-daily",
@@ -19,7 +19,7 @@
   ],
   "staticHash": false,
   "homepage": "https://github.com/Cxquang/songloft-ncm-daily",
-  "download_url": "https://github.com/Cxquang/songloft-ncm-daily/releases/latest/download/ncm-daily-v0.4.0.jsplugin.zip",
-  "entryHash": "f9a798e990757412e65c9c50d9c4f03b3caa6ecdca379d3552d1ad2803b6c791",
-  "zipHash": "2031f004e560033f4c0ec4947fa85813a5c8973a9ef6191caa456ee84451f863"
+  "download_url": "https://github.com/Cxquang/songloft-ncm-daily/releases/latest/download/ncm-daily-v0.5.0.jsplugin.zip",
+  "entryHash": "99fb040cb0b26534b959055533162c5b9bb9a07cc387a28e3081c183605e06f8",
+  "zipHash": "c48ad8082225f603edc4d5aedc806958400a191e616d3546dc6398f8833b4774"
 }

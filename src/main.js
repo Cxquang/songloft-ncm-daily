@@ -1,5 +1,5 @@
 /**
- * ncm-daily — 网易云日推同步插件 for Songloft（v0.4.0）
+ * ncm-daily — 网易云日推同步插件 for Songloft（v0.5.0）
  *
  * 登录方式（v0.4.0 起已移除扫码登录）：
  *  1. 手机号 + 短信验证码：插件请求网易云发送短信验证码，并通过 MoviePilot 的
@@ -7,11 +7,16 @@
  *     /code 123456，NcmQr 会把验证码转回本插件完成登录
  *  2. 手动 Cookie：粘贴 music.163.com 的完整 Cookie（含 MUSIC_U）
  *
+ * Cookie 保活（v0.5.0 新增）：
+ *  按 cookieRefreshIntervalMin 周期调用 /login/refresh 续期登录态，保存返回的
+ *  最新 Cookie（与原 Cookie 字段合并）；登录检查发现失效时也先尝试续期，
+ *  续期失败才清空 Cookie 走短信验证码兜底
+ *
  * 功能：每日定时拉取网易云「每日推荐」，逐首解析播放地址（内置解灰），
  *      dedupKey 幂等入库并刷新歌单
  */
 
-const PLUGIN_VERSION = '0.4.0';
+const PLUGIN_VERSION = '0.5.0';
 
 const DEFAULT_CONFIG = {
   ncmBase: 'http://192.168.123.176:3000',
@@ -23,6 +28,7 @@ const DEFAULT_CONFIG = {
   playlistName: '每日推荐',
   bitrate: 320000,
   loginCheckIntervalMin: 30,
+  cookieRefreshIntervalMin: 360,
   notifyOnSuccess: true
 };
 
@@ -31,11 +37,12 @@ const SKEY = {
   cookie: 'ncmDaily.cookie',
   codeSentAt: 'ncmDaily.codeSentAt',
   lastRunDate: 'ncmDaily.lastRunDate',
-  lastSync: 'ncmDaily.lastSync'
+  lastSync: 'ncmDaily.lastSync',
+  lastRefreshAt: 'ncmDaily.lastRefreshAt'
 };
 
 const CONFIG_FIELDS = ['ncmBase', 'mpNotifyUrl', 'mpNotifyApikey', 'publicSecret', 'phone',
-  'syncHour', 'playlistName', 'bitrate', 'loginCheckIntervalMin', 'notifyOnSuccess'];
+  'syncHour', 'playlistName', 'bitrate', 'loginCheckIntervalMin', 'cookieRefreshIntervalMin', 'notifyOnSuccess'];
 
 // 短信验证码有效期约 5 分钟；60 秒内不重复请求
 const CODE_TTL_MS = 5 * 60 * 1000;
@@ -336,6 +343,7 @@ async function saveLogin(cookie, how, notify) {
   }
   const name = st.profile && st.profile.nickname ? st.profile.nickname : '';
   log(how + '登录成功' + (name ? '：' + name : '') + '（cookie 长度 ' + String(cookie).length + '）');
+  await storageSet(SKEY.lastRefreshAt, Date.now()); // 新登录的 cookie 无需立即续期
   if (notify) await notifyMP('网易云登录成功', '已通过' + how + '登录' + (name ? '：' + name : '') + '。');
   if (state.syncAfterLogin) {
     state.syncAfterLogin = false;
@@ -392,6 +400,72 @@ async function beginCodeLogin(reason) {
       '自动发送验证码失败：' + e.message + '\n请打开 Songloft「网易云日推」插件页点「发送验证码」重试，或用 Cookie 登录。');
     return { ok: false, error: e.message };
   }
+}
+
+/* ================= Cookie 自动续期 ================= */
+
+/**
+ * 合并 Cookie：newStr 的字段覆盖 oldStr 同名字段，oldStr 独有字段保留。
+ * /login/refresh 返回的 cookie 不一定带全手动粘贴时的字段（如 _ntes_nuid、NMTID），
+ * 直接整体替换会丢字段，合并更稳。
+ */
+function mergeCookies(oldStr, newStr) {
+  const out = {};
+  const eat = function (s) {
+    String(s || '').split(';').forEach(function (kv) {
+      const eq = kv.indexOf('=');
+      if (eq <= 0) return;
+      out[kv.slice(0, eq).trim()] = kv.slice(eq + 1).trim();
+    });
+  };
+  eat(oldStr);
+  eat(newStr);
+  return Object.keys(out).map(function (k) { return k + '=' + out[k]; }).join('; ');
+}
+
+/**
+ * 调用 /login/refresh 续期登录态：成功则把返回的最新 cookie 与原 cookie 合并后保存，
+ * 再用 /login/status 校验，校验失败回滚原 cookie。
+ * 任何失败都保留原 cookie，交由登录检查逻辑兜底。
+ */
+async function refreshLoginCookie() {
+  const prev = await storageGet(SKEY.cookie, '');
+  if (!prev) return { ok: false, message: '尚未登录，没有可续期的 Cookie' };
+  const res = await fetch(ncmBase() + '/login/refresh?_t=' + Date.now(), {
+    method: 'POST',
+    headers: { 'X-Fetch-Timeout-Ms': '15000', Cookie: prev }
+  });
+  let body = {};
+  try { body = await res.json(); }
+  catch (e) {
+    logWarn('Cookie 续期返回非 JSON（HTTP ' + res.status + '）');
+    return { ok: false, message: '续期接口返回异常（HTTP ' + res.status + '）' };
+  }
+  const b = bodyOf(body);
+  let fresh = typeof b.cookie === 'string' ? b.cookie : '';
+  if (!fresh && typeof body.cookie === 'string') fresh = body.cookie;
+  if (!fresh) fresh = cookieFromHeaders(res);
+  const codeNum = b.code === undefined ? body.code : b.code;
+  if (Number(codeNum) !== 200 || !fresh) {
+    const msg = '续期未成功（code=' + (codeNum === undefined ? '?' : codeNum) +
+      (fresh ? '' : '，响应未包含 cookie') + '）';
+    logWarn('Cookie ' + msg + '，保留原 Cookie 等待登录检查兜底');
+    return { ok: false, message: msg };
+  }
+  const merged = mergeCookies(prev, fresh);
+  await storageSet(SKEY.cookie, merged);
+  loginCache = { ok: null, profile: null, at: 0 };
+  let st = null;
+  try { st = await getLoginStatus(true); } catch (e) { logWarn('续期后状态校验异常: ' + e.message); }
+  if (st && st.ok) {
+    await storageSet(SKEY.lastRefreshAt, Date.now());
+    log('Cookie 续期成功，最新 Cookie 已保存（长度 ' + merged.length + '）');
+    return { ok: true, message: '续期成功，最新 Cookie 已保存' };
+  }
+  await storageSet(SKEY.cookie, prev);
+  loginCache = { ok: null, profile: null, at: 0 };
+  logWarn('续期后校验未通过，已回滚原 Cookie');
+  return { ok: false, message: '新 Cookie 校验未通过，已回滚原 Cookie' };
 }
 
 /* ================= 每日同步 ================= */
@@ -529,13 +603,36 @@ async function checkSchedule() {
   }
 }
 
+async function checkCookieRefresh() {
+  try {
+    const intervalMin = Number(config.cookieRefreshIntervalMin) || 0;
+    if (intervalMin <= 0) return;
+    const ck = await storageGet(SKEY.cookie, '');
+    if (!ck) return;
+    const last = Number(await storageGet(SKEY.lastRefreshAt, 0)) || 0;
+    if (Date.now() - last < intervalMin * 60000) return;
+    await storageSet(SKEY.lastRefreshAt, Date.now()); // 先占位：失败也等下个周期，避免对 /login/refresh 高频重试触发风控
+    const r = await refreshLoginCookie();
+    if (!r.ok) logWarn('定时 Cookie 续期未成功：' + r.message);
+  } catch (e) {
+    logWarn('Cookie 续期检查异常: ' + e.message);
+  }
+}
+
 async function checkLoginPeriodic() {
   try {
     const ck = await storageGet(SKEY.cookie, '');
     if (!ck) return;
     const st = await getLoginStatus(true);
     if (!st.ok) {
-      logWarn('检测到网易云登录失效');
+      logWarn('检测到网易云登录失效，先尝试续期 Cookie');
+      let refreshed = false;
+      try { refreshed = (await refreshLoginCookie()).ok; }
+      catch (e) { logWarn('续期尝试异常: ' + e.message); }
+      if (refreshed) {
+        log('Cookie 续期成功，登录态已恢复，无需重新登录');
+        return;
+      }
       await storageSet(SKEY.cookie, '');
       loginCache = { ok: null, profile: null, at: 0 };
       await beginCodeLogin('expiry');
@@ -580,6 +677,8 @@ router.get('/api/status', async function () {
   const st = await getLoginStatus(false);
   const lastSync = await storageGet(SKEY.lastSync, null);
   const sentAt = Number(await storageGet(SKEY.codeSentAt, 0)) || 0;
+  const lastRefreshAt = Number(await storageGet(SKEY.lastRefreshAt, 0)) || 0;
+  const refreshInterval = Number(config.cookieRefreshIntervalMin) || 0;
   return jsonResponse({
     version: PLUGIN_VERSION,
     syncing: state.syncing,
@@ -590,6 +689,11 @@ router.get('/api/status', async function () {
       codeExpireAt: sentAt ? sentAt + CODE_TTL_MS : 0
     },
     lastSync: lastSync,
+    cookieRefresh: {
+      intervalMin: refreshInterval,
+      lastAt: lastRefreshAt,
+      nextAt: lastRefreshAt > 0 && refreshInterval > 0 ? lastRefreshAt + refreshInterval * 60000 : 0
+    },
     config: config
   });
 });
@@ -619,6 +723,7 @@ router.post('/api/config', async function (req) {
   config.syncHour = Number(config.syncHour) || 0;
   config.bitrate = Number(config.bitrate) || 320000;
   config.loginCheckIntervalMin = Number(config.loginCheckIntervalMin) || 30;
+  config.cookieRefreshIntervalMin = Math.max(0, Number(config.cookieRefreshIntervalMin) || 0);
   config.notifyOnSuccess = !!config.notifyOnSuccess;
   config.phone = String(config.phone || '').trim();
   await storageSet(SKEY.config, config);
@@ -669,6 +774,19 @@ router.post('/api/login/cookie', async function (req) {
   } catch (e) {
     logWarn('手动 Cookie 登录失败: ' + e.message);
     return jsonResponse({ ok: false, error: e.message }, 400);
+  }
+});
+
+// 手动立即续期：调用 /login/refresh 并保存最新 Cookie（与定时续期同一套逻辑）
+router.post('/api/login/refresh', async function () {
+  try {
+    await storageSet(SKEY.lastRefreshAt, Date.now()); // 占位：失败也等下个周期再试
+    const r = await refreshLoginCookie();
+    if (r.ok) return jsonResponse({ ok: true, message: r.message });
+    return jsonResponse({ ok: false, error: r.message }, 400);
+  } catch (e) {
+    logWarn('手动 Cookie 续期异常: ' + e.message);
+    return jsonResponse({ ok: false, error: e.message }, 500);
   }
 });
 
@@ -745,9 +863,11 @@ function migrateConfig(saved) {
 globalThis.onInit = async function () {
   const saved = await storageGet(SKEY.config, null);
   if (saved && typeof saved === 'object') config = migrateConfig(saved);
-  scheduleTimer = setInterval(function () { checkSchedule(); }, 60000);
+  scheduleTimer = setInterval(function () { checkSchedule(); checkCookieRefresh(); }, 60000);
   rebuildLoginTimer();
-  log('v' + PLUGIN_VERSION + ' 已启动（ncm=' + ncmBase() + '，同步时间 ' + config.syncHour + ' 点）');
+  const ri = Number(config.cookieRefreshIntervalMin) || 0;
+  log('v' + PLUGIN_VERSION + ' 已启动（ncm=' + ncmBase() + '，同步时间 ' + config.syncHour +
+    ' 点，Cookie 续期' + (ri > 0 ? '每 ' + ri + ' 分钟' : '已关闭') + '）');
   if (!config.phone) logWarn('未配置手机号：登录失效时无法自动发送短信验证码，请在插件设置里填写');
   if (!config.publicSecret) logWarn('未配置回调密钥：企业微信 /code 指令将无法把验证码转回插件');
 };

@@ -1,6 +1,7 @@
 /**
- * ncm-daily 插件前端（v0.4.0）
+ * ncm-daily 插件前端（v0.5.0）
  * 登录方式：手机号短信验证码（企微 /code 指令转发）或手动 Cookie
+ * Cookie 保活：按间隔自动调 /login/refresh 续期（可手动「立即续期」）
  * 后端是唯一登录方：前端只读 /api/status 渲染状态
  * 兼容宿主注入的 SongloftPlugin 桥；无桥时回退原生 fetch + Bearer token
  */
@@ -118,6 +119,18 @@
     }
   }
 
+  function renderCookieRefresh(cr) {
+    var el = $('refresh-status');
+    if (!cr) { el.innerHTML = ''; return; }
+    var interval = Number(cr.intervalMin) || 0;
+    if (interval <= 0) { el.innerHTML = 'Cookie 自动续期：<span class="badge bad">已关闭</span>'; return; }
+    var human = interval % 60 === 0 ? (interval / 60) + ' 小时' : interval + ' 分钟';
+    if (!cr.lastAt) { el.innerHTML = 'Cookie 自动续期：每 ' + esc(human) + '（尚未执行过）'; return; }
+    var next = cr.nextAt && cr.nextAt > Date.now() ? '，下次约 ' + esc(new Date(cr.nextAt).toLocaleString('zh-CN')) : '，待执行';
+    el.innerHTML = 'Cookie 自动续期：每 ' + esc(human) + '，上次 ' +
+      esc(new Date(cr.lastAt).toLocaleString('zh-CN')) + next;
+  }
+
   function refreshStatus() {
     return apiGet('/api/status').then(function (s) {
       $('ver').textContent = 'v' + s.version;
@@ -126,6 +139,7 @@
       renderLogin(s.login);
       renderPhone(s.phone);
       renderLastSync(s.lastSync);
+      renderCookieRefresh(s.cookieRefresh);
       var wasLogged = lastSyncState === true;
       lastSyncState = !!(s.login && s.login.ok);
       if (lastSyncState) $('code-state').textContent = '已登录，如需切换账号可先退出登录';
@@ -222,6 +236,8 @@
     $('cfg-playlistName').value = cfg.playlistName || '';
     $('cfg-bitrate').value = String(cfg.bitrate || 320000);
     $('cfg-loginCheckIntervalMin').value = cfg.loginCheckIntervalMin || 30;
+    var cri = Number(cfg.cookieRefreshIntervalMin);
+    $('cfg-cookieRefreshIntervalMin').value = (isFinite(cri) && cri >= 0) ? cri : 360;
     $('cfg-notifyOnSuccess').checked = !!cfg.notifyOnSuccess;
   }
 
@@ -236,6 +252,7 @@
       playlistName: $('cfg-playlistName').value.trim() || '每日推荐',
       bitrate: Number($('cfg-bitrate').value) || 320000,
       loginCheckIntervalMin: Number($('cfg-loginCheckIntervalMin').value) || 30,
+      cookieRefreshIntervalMin: Math.max(0, Number($('cfg-cookieRefreshIntervalMin').value) || 0),
       notifyOnSuccess: $('cfg-notifyOnSuccess').checked
     };
     apiPost('/api/config', body).then(function () {
@@ -268,7 +285,7 @@
     apiGet('/api/logs?clear=1').then(refreshLogs).catch(function () { });
   }
 
-  /* ---------- 手动 Cookie 登录 ---------- */
+  /* ---------- 手动 Cookie 登录与续期 ---------- */
   function saveCookie() {
     var v = $('cookie-input').value.trim();
     var tip = $('cookie-state');
@@ -283,6 +300,20 @@
       refreshLogs();
     }).catch(function (e) {
       tip.textContent = '失败: ' + e.message;
+    });
+  }
+
+  function refreshCookie() {
+    var tip = $('cookie-state');
+    tip.textContent = '续期中…';
+    apiPost('/api/login/refresh', {}).then(function (r) {
+      tip.textContent = r.message || '续期成功';
+      return refreshStatus();
+    }).then(function () {
+      refreshLogs();
+    }).catch(function (e) {
+      tip.textContent = '续期失败: ' + e.message;
+      refreshLogs();
     });
   }
 
@@ -301,6 +332,7 @@
       if (e.key === 'Enter') loginByCode();
     });
     $('btn-save-cookie').addEventListener('click', saveCookie);
+    $('btn-refresh-cookie').addEventListener('click', refreshCookie);
     $('btn-save').addEventListener('click', saveConfig);
     $('btn-log-refresh').addEventListener('click', refreshLogs);
     $('btn-log-clear').addEventListener('click', clearLogs);
